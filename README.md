@@ -16,21 +16,45 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Memory Leak Issue
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Use Node.js version **24.13.0**.
 
-## Learn More
+Build the project:
 
-To learn more about Next.js, take a look at the following resources:
+```shell
+npm run build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Run production build with `--inspect` option:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```shell
+NODE_OPTIONS=--inspect ./node_modules/.bin/next start
+```
 
-## Deploy on Vercel
+Follow http://localhost:3000/ open Node.js DevTools and make an initial memory snapshot (do GC before). Then, to emulate request cancellation, you can run the snippet in the browser console:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```js
+const ATTEMPT_COUNT = 50
+const ATTEMPT_TIMEOUT_MS = 10
+const REQUEST_COUNT = 10
+const REQUEST_TIMEOUT_MS = 500
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+for await (const attemptIndex of Array.from({ length: ATTEMPT_COUNT }).keys()) {
+  for (const requestIndex of Array.from({ length: REQUEST_COUNT }).keys()) {
+    fetch('http://localhost:3000/', {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+  }
+
+  await new Promise((resolve) => {
+    setTimeout(resolve, ATTEMPT_TIMEOUT_MS)
+  })
+}
+```
+
+Make another snapshot after it (call GC before) and compare them. You should see a similar picture:
+
+![Screenshot 2026-01-26 at 17.37.02.png](Screenshot%202026-01-26%20at%2017.37.02.png)
+
+`Node / zlib_memory` chunks won't dissapper, they will appear more and more during testing. If you disable compression in Next.js config with the option `compress` `false`, the issue is gone.
