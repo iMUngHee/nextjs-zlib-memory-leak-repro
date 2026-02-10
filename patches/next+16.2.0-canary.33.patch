@@ -1,0 +1,13 @@
+diff --git a/node_modules/next/dist/server/lib/router-server.js b/node_modules/next/dist/server/lib/router-server.js
+index ddbb264..5fdbe91 100644
+--- a/node_modules/next/dist/server/lib/router-server.js
++++ b/node_modules/next/dist/server/lib/router-server.js
+@@ -26,7 +26,7 @@ const _resolveroutes = require("./router-utils/resolve-routes");
+ const _requestmeta = require("../request-meta");
+ const _pathhasprefix = require("../../shared/lib/router/utils/path-has-prefix");
+ const _removepathprefix = require("../../shared/lib/router/utils/remove-path-prefix");
+-const _compression = /*#__PURE__*/ _interop_require_default(require("next/dist/compiled/compression"));
++const _compression = /*#__PURE__*/ _interop_require_default(require("compression"));
+ const _nextrequest = require("../web/spec-extension/adapters/next-request");
+ const _ispostpone = require("./router-utils/is-postpone");
+ const _parseurl = require("../../shared/lib/router/utils/parse-url");

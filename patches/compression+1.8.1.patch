@@ -1,0 +1,21 @@
+diff --git a/node_modules/compression/index.js b/node_modules/compression/index.js
+index c0638e0..137f92a 100644
+--- a/node_modules/compression/index.js
++++ b/node_modules/compression/index.js
+@@ -238,6 +238,16 @@ function compression (options) {
+       _on.call(res, 'drain', function onResponseDrain () {
+         stream.resume()
+       })
++
++      // Destroy the compression stream when the response closes, to free
++      // native zlib memory. Without this, client aborts leave the zlib
++      // Transform stream alive (since it is not pipe()'d to res but uses
++      // manual data forwarding), causing arrayBuffers to leak.
++      _on.call(res, 'close', function onResponseClose () {
++        if (stream && !stream.destroyed) {
++          stream.destroy()
++        }
++      })
+     })
+ 
+     next()

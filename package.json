@@ -5,11 +5,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "NODE_OPTIONS='--inspect' next start",
+    "postinstall": "patch-package"
   },
   "dependencies": {
-    "next": "16.1.5",
+    "compression": "^1.8.1",
+    "next": "16.2.0-canary.33",
+    "patch-package": "^8.0.1",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },

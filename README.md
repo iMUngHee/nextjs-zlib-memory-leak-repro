@@ -1,60 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Next.js Compression (zlib) Memory Leak
 
-## Getting Started
+## Related Issues
 
-First, run the development server:
+- [vercel/next.js#89091](https://github.com/vercel/next.js/issues/89091) — zlib memory leak on Node.js 24
+- [vercel/next.js@abfd994](https://github.com/vercel/next.js/commit/abfd99455120c5636238ddebb63636b19011e556) — fix attempt (did not resolve for this repro)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Observation
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+When a client disconnects mid-stream (abort, navigation, timeout), `ServerResponse` instances remain reachable after the connection closes:
 
-## Memory Leak Issue
+- `res.destroyed === true`
+- `res.finished === false`
 
-Use Node.js version **24.13.0**.
+Heap snapshots show growing `Node / zlib_memory` retained through the `ServerResponse` → compression closure chain:
 
-Build the project:
+![heap-dump](./image.png)
 
-```shell
-npm run build
-```
+The retainer chain shows `ServerResponse` → compression listener/closure → zlib stream. As a control, a minimal `http.createServer` + `compression` server with the same abort pattern does **not** show the same memory growth. This suggests the issue is specific to Next.js's async request/render pipeline keeping `res` (and therefore the zlib stream) alive longer than expected after early disconnects.
 
-Run production build with `--inspect` option:
+This issue reproduces on **Node.js 24+**. On Node.js 23 and below, the leak does not manifest.
 
-```shell
-NODE_OPTIONS=--inspect ./node_modules/.bin/next start
-```
+## To Reproduce
 
-Follow http://localhost:3000/ open Node.js DevTools and make an initial memory snapshot (do GC before). Then, to emulate request cancellation, you can run the snippet in the browser console:
+1. Use Node.js **24+**
+2. `npm run build`
+3. `npm start`
+4. Follow http://localhost:3000/
+5. Call GC & make memory snapshot
+6. Run snippet in browser console:
 
 ```js
-const ATTEMPT_COUNT = 50
-const ATTEMPT_TIMEOUT_MS = 10
-const REQUEST_COUNT = 10
-const REQUEST_TIMEOUT_MS = 500
+const ATTEMPT_COUNT = 50;
+const ATTEMPT_TIMEOUT_MS = 10;
+const REQUEST_COUNT = 10;
+const REQUEST_TIMEOUT_MS = 500;
 
 for await (const attemptIndex of Array.from({ length: ATTEMPT_COUNT }).keys()) {
   for (const requestIndex of Array.from({ length: REQUEST_COUNT }).keys()) {
     fetch('http://localhost:3000/', {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    });
   }
 
   await new Promise((resolve) => {
-    setTimeout(resolve, ATTEMPT_TIMEOUT_MS)
-  })
+    setTimeout(resolve, ATTEMPT_TIMEOUT_MS);
+  });
 }
 ```
 
-Make another snapshot after it (call GC before) and compare them. You should see a similar picture:
+7. Call GC & make memory snapshot
+8. Compare snapshots and see `Node / zlib_memory` positive delta
 
-![Screenshot 2026-01-26 at 17.37.02.png](Screenshot%202026-01-26%20at%2017.37.02.png)
+If you disable compression in Next.js config with `compress: false`, the issue is gone.
 
-`Node / zlib_memory` chunks won't dissapper, they will appear more and more during testing. If you disable compression in Next.js config with the option `compress` `false`, the issue is gone.
+## Workaround
+
+Two patches applied via [`patch-package`](https://github.com/ds300/patch-package) (auto-applied on `npm install`):
+
+### `patches/compression+1.8.1.patch`
+
+Calls `stream.destroy()` on `res` `close` to break the retention chain at the stream level:
+
+```javascript
+_on.call(res, 'close', function onResponseClose() {
+  if (stream && !stream.destroyed) {
+    stream.destroy();
+  }
+});
+```
+
+### `patches/next+16.2.0-canary.33.patch`
+
+Replaces `next/dist/compiled/compression` (minified) with the standalone `compression` package, so the above patch can be applied to readable source.
+
+### Note
+
+This mitigates the zlib memory growth by breaking the retention chain at the stream level, but does not address the underlying `res` reachability after early disconnects.
+
+## Verify without workaround
+
+```shell
+npm install --ignore-scripts   # skip patch-package
+npm run build
+npm start
+```
+
+Then follow the reproduction steps above.
