@@ -77,6 +77,32 @@ Replaces `next/dist/compiled/compression` (minified) with the standalone `compre
 
 This mitigates the zlib memory growth by breaking the retention chain at the stream level, but does not address the underlying `res` reachability after early disconnects.
 
+## Analysis (added)
+
+![heap_dump2](./image2.png)
+
+`AfterContext` (`after-context.js`) stores three callbacks — `waitUntil`, `onClose`, `onTaskError` — whose closures capture `ServerResponse`. On Node.js 24+, `AsyncContextFrame` (the new ALS internals) keeps the `store` containing `afterContext` reachable, preventing GC from collecting:
+
+```
+AsyncContextFrame → store → afterContext → callbacks → ServerResponse
+  → compression closure → Gzip → native zlib handle (zlib_memory)
+```
+
+Patching the **production runtime bundle** (`app-page-turbo.runtime.prod.js`) to nullify all three callbacks on response close eliminates the leak:
+
+```js
+// AfterContext constructor
+if (onClose) {
+  onClose(() => {
+    this.onTaskError = null;
+    this.onClose = null;
+    this.waitUntil = null;
+  });
+}
+```
+
+All three must be cleared — removing only one still leaks via the remaining callbacks.
+
 ## Verify without workaround
 
 ```shell
